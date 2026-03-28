@@ -188,8 +188,7 @@ async function restoreCodexPatchCommand() {
 
 function buildAccountPicks(accounts, currentAccountId) {
   const picks = accounts.map((account) => ({
-    label: account.displayName,
-    description: account.email,
+    label: account.email,
     detail: `${account.userName} | ${account.planType} | ${formatDate(account.expiresAt)}`,
     account,
     picked: account.accountId === currentAccountId
