@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $packageJsonPath = Join-Path $root "package.json"
 $package = Get-Content -LiteralPath $packageJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $stageRoot = Join-Path $root ".vsix-staging"
 $extensionFolder = Join-Path $stageRoot "extension"
@@ -33,7 +34,14 @@ $filesToCopy = @(
 )
 
 foreach ($file in $filesToCopy) {
-  Copy-Item -LiteralPath (Join-Path $root $file) -Destination (Join-Path $extensionFolder $file) -Force
+  $sourcePath = Join-Path $root $file
+  $destinationPath = Join-Path $extensionFolder $file
+  if ($file -eq "package.json") {
+    $content = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
+    [System.IO.File]::WriteAllText($destinationPath, $content, $utf8NoBom)
+  } else {
+    Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+  }
 }
 
 $contentTypes = @'
