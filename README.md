@@ -1,38 +1,38 @@
-# Codex Account Switcher
+﻿# Codex 账号切换器
 
-A VS Code extension that adds a status bar button for switching the active Codex account.
+一个用于切换 Codex 账号的 VS Code 扩展，会在状态栏提供一个入口按钮。
 
-## What it does
+## 功能
 
-- Reads saved account records from a configurable directory
-- Shows a Quick Pick window with account metadata
-- Copies the selected account auth file into the active Codex profile
-- Optionally also copies a same-name `.toml` sidecar file
-- Supports deleting saved account records
-- Can apply or restore the optional Codex reload patch
+- 从可配置目录读取已保存的账号记录
+- 通过选择框显示账号信息并切换账号
+- 将所选账号的认证文件复制到当前 Codex 配置目录
+- 可选复制同名 `.toml` 附带配置文件
+- 支持删除已保存账号
+- 支持应用或恢复可选的 Codex 重载补丁
 
-## Default paths
+## 默认路径
 
-- If `codexAccountSwitcher.accountsDir` is empty, the extension uses a sibling folder next to `codexDir`, such as `.codex-accounts`
-- If `codexAccountSwitcher.codexDir` is empty, the extension uses `~/.codex`
+- 如果 `codexAccountSwitcher.accountsDir` 为空，会自动使用 `codexDir` 同级目录，例如 `.codex-accounts`
+- 如果 `codexAccountSwitcher.codexDir` 为空，会自动使用 `~/.codex`
 
-## Saved account layout
+## 已保存账号的目录结构
 
 ```text
 .codex-accounts/
-  Account Name__account-id.json
-  Account Name__account-id.toml
+  账号名__account-id.json
+  账号名__account-id.toml
 ```
 
-## Settings
+## 设置项
 
 - `codexAccountSwitcher.accountsDir`
 - `codexAccountSwitcher.codexDir`
 - `codexAccountSwitcher.copyConfigToml`
 - `codexAccountSwitcher.reloadAfterSwitch`
 
-## Running locally
+## 本地调试
 
-1. Open this folder in VS Code.
-2. Press `F5` to launch an Extension Development Host.
-3. In the new window, click the status bar button labeled `Codex`.
+1. 在 VS Code 中打开本扩展目录。
+2. 按 `F5` 启动 Extension Development Host。
+3. 在新窗口里点击状态栏中的 `Codex` 按钮。
