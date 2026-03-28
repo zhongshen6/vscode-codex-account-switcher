@@ -1,7 +1,2 @@
 codex-account-switcher-0.0.1.vsix
-.vsix-staging/\[Content_Types].xml
-.vsix-staging/extension/codexPatch.js
-.vsix-staging/extension.vsixmanifest
-.vsix-staging/extension/extension.js
-.vsix-staging/extension/package.json
-.vsix-staging/extension/README.md
+.vsix-staging
