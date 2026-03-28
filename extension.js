@@ -6,30 +6,11 @@ const path = require("path");
 const vscode = require("vscode");
 const codexPatch = require("./codexPatch");
 
-function getConfig() {
-  return vscode.workspace.getConfiguration("codexAccountSwitcher");
-}
-
-function getConfiguredPath(key) {
-  const value = getConfig().get(key);
-  return typeof value === "string" ? value.trim() : "";
-}
-
 function getAccountsDir() {
-  const configured = getConfiguredPath("accountsDir");
-  if (configured) {
-    return configured;
-  }
-
   return path.join(path.dirname(getCodexDir()), ".codex-accounts");
 }
 
 function getCodexDir() {
-  const configured = getConfiguredPath("codexDir");
-  if (configured) {
-    return configured;
-  }
-
   const homeDir = process.env.USERPROFILE || process.env.HOME || "";
   return path.join(homeDir, ".codex");
 }
@@ -392,7 +373,7 @@ async function switchAccount(statusBarItem) {
   await fs.mkdir(codexDir, { recursive: true });
   await fs.copyFile(selection.authPath, path.join(codexDir, "auth.json"));
 
-  const shouldCopyConfig = getConfig().get("copyConfigToml");
+  const shouldCopyConfig = false;
   if (shouldCopyConfig) {
     const sourceConfigPath = selection.authPath.replace(/\.json$/i, ".toml");
     try {
@@ -406,7 +387,7 @@ async function switchAccount(statusBarItem) {
   await updateStatusBar(statusBarItem);
 
   const message = `已切换到账号：${selection.displayName}`;
-  const shouldReload = getConfig().get("reloadAfterSwitch");
+  const shouldReload = true;
   if (shouldReload) {
     if (!hadAuthBeforeSwitch) {
       vscode.window.setStatusBarMessage(`${message}，正在重启扩展宿主...`, 3000);
@@ -527,12 +508,6 @@ function activate(context) {
     await restoreCodexPatchCommand();
   });
 
-  const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration("codexAccountSwitcher")) {
-      void updateStatusBar(statusBarItem);
-    }
-  });
-
   const focusDisposable = vscode.window.onDidChangeWindowState((windowState) => {
     if (windowState.focused) {
       void updateStatusBar(statusBarItem);
@@ -548,7 +523,6 @@ function activate(context) {
     deleteAccountDisposable,
     applyPatchDisposable,
     restorePatchDisposable,
-    configDisposable,
     focusDisposable,
     authWatcherDisposable
   );

@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "codex-account-switcher",
   "displayName": "Codex 账号切换器",
   "description": "通过状态栏按钮和选择框切换 Codex 账号。",
@@ -42,31 +42,6 @@
         "command": "codexAccountSwitcher.restoreCodexPatch",
         "title": "Codex 账号切换器：恢复 Codex 补丁"
       }
-    ],
-    "configuration": {
-      "title": "Codex 账号切换器",
-      "properties": {
-        "codexAccountSwitcher.accountsDir": {
-          "type": "string",
-          "default": "",
-          "description": "保存账号 auth JSON 文件的目录。留空时会使用 codexDir 同级目录，例如 .codex-accounts。"
-        },
-        "codexAccountSwitcher.codexDir": {
-          "type": "string",
-          "default": "",
-          "description": "Codex 主目录，auth.json 和可选的 config.toml 会写入这里。留空时使用 ~/.codex。"
-        },
-        "codexAccountSwitcher.copyConfigToml": {
-          "type": "boolean",
-          "default": false,
-          "description": "开启后，如果所选账号存在同名 .toml 附带文件，也会一并复制。"
-        },
-        "codexAccountSwitcher.reloadAfterSwitch": {
-          "type": "boolean",
-          "default": true,
-          "description": "切换账号后自动重载 Codex 进程。"
-        }
-      }
-    }
+    ]
   }
 }
