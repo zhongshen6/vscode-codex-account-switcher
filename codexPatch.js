@@ -18,12 +18,42 @@ const replacements = [
   {
     label: "turn-complete-handler",
     before: `let m=new q_(d);e.push(m);let g=sFe(d,u,m,l,e),v=BZ(d),b=new Ma("vscode",r),S=new K_,R=new Nv,k=new af(R);e.push(it.window.onDidChangeWindowState(B=>{if(!B.focused){R.emit("background");return}R.emit("foreground")})),e.push(d.registerInternalNotificationHandler(B=>{B.method==="turn/completed"&&R.emit("turnComplete")}));let C=new V_;`,
-    after: `let m=new q_(d);e.push(m);let g=sFe(d,u,m,l,e),v=BZ(d),b=new Ma("vscode",r),S=new K_,R=new Nv,k=new af(R),codexReloadTurnCompleteHandler=B=>{B.method==="turn/completed"&&R.emit("turnComplete")},reloadCodexProcess=async()=>{let B=d.startCodexProcess();return!B.success&&B.errorMessage&&K().error(B.errorMessage),B.success&&d.registerInternalNotificationHandler(codexReloadTurnCompleteHandler),B};e.push(it.window.onDidChangeWindowState(B=>{if(!B.focused){R.emit("background");return}R.emit("foreground")})),e.push(d.registerInternalNotificationHandler(codexReloadTurnCompleteHandler));let C=new V_;`
+    after: `let m=new q_(d);e.push(m);let g=sFe(d,u,m,l,e),v=BZ(d),b=new Ma("vscode",r),S=new K_,R=new Nv,k=new af(R),codexReloadTurnCompleteHandler=B=>{B.method==="turn/completed"&&R.emit("turnComplete")},reloadCodexProcess=async()=>{let B=d.startCodexProcess();return!B.success&&B.errorMessage&&K().error(B.errorMessage),B};e.push(it.window.onDidChangeWindowState(B=>{if(!B.focused){R.emit("background");return}R.emit("foreground")})),e.push(d.registerInternalNotificationHandler(codexReloadTurnCompleteHandler));let C=new V_;`
+  },
+  {
+    label: "conversation-preview-loader-disposable",
+    before: `constructor(e,r){this.codexMcpConnection=e;this.globalState=r;e.registerProvider(N5,{onResult:n=>this.handleResult(n)})}nextRequestId=1;`,
+    after: `constructor(e,r){this.codexMcpConnection=e;this.globalState=r;this.providerDisposable=e.registerProvider(N5,{onResult:n=>this.handleResult(n)})}providerDisposable;nextRequestId=1;`
+  },
+  {
+    label: "conversation-preview-loader-dispose-method",
+    before: `return this.codexMcpConnection.sendRequest(N5,r,"thread/list",o),n}};`,
+    after: `return this.codexMcpConnection.sendRequest(N5,r,"thread/list",o),n}dispose(){this.providerDisposable?.dispose(),this.callbacks.clear()}};`
+  },
+  {
+    label: "preview-loader-subscription",
+    before: `let S=this.sharedObjectRepository.addSubscriber((R,k)=>{this.broadcastToAllViews({type:"shared-object-updated",key:R,value:k})});this.subscriptions.push(Re.Disposable.from({dispose:S})),this.previewLoader=new n_(this.codexMcpConnection,this.globalState),this.ensureRestoredConversationTabsResolved()}`,
+    after: `let S=this.sharedObjectRepository.addSubscriber((R,k)=>{this.broadcastToAllViews({type:"shared-object-updated",key:R,value:k})});this.subscriptions.push(Re.Disposable.from({dispose:S})),this.previewLoader=new n_(this.codexMcpConnection,this.globalState),this.subscriptions.push(this.previewLoader),this.ensureRestoredConversationTabsResolved()}`
+  },
+  {
+    label: "initialize-webview-sidebar-reloadable",
+    before: `async initializeWebview(e,r,n){this.registerIpcClientForWebview(e),this.workerBusMessageHandler.registerWebview(e);let o=Re.Uri.joinPath(this.extensionUri,"webview");e.options={enableScripts:!0,enableCommandUris:!1,localResourceRoots:[o]};let i=e.onDidReceiveMessage(s=>{`,
+    after: `async initializeWebview(e,r,n){this.registerIpcClientForWebview(e),this.workerBusMessageHandler.registerWebview(e);let o=Re.Uri.joinPath(this.extensionUri,"webview");e.options={enableScripts:!0,enableCommandUris:!1,localResourceRoots:[o]};this.__codexSidebarMessageDisposable&&r==="sidebar"&&this.__codexSidebarMessageDisposable.dispose();let i=e.onDidReceiveMessage(s=>{`
+  },
+  {
+    label: "initialize-webview-sidebar-disposable-store",
+    before: `}this.handleMessage(e,s)});this.subscriptions.push(i),e.html=await this.getWebviewContent(e)}onPanelReady(e){`,
+    after: `}this.handleMessage(e,s)});r==="sidebar"?this.__codexSidebarMessageDisposable=i:this.subscriptions.push(i),e.html=await this.getWebviewContent(e)}onPanelReady(e){`
+  },
+  {
+    label: "codex-ui-recreate",
+    before: `let C=new V_;e.push(C);let P=new Z_(b,C);e.push(P);let U=new W_(v,d,C,l,u,a,b,S,k),te=new Qw(v,U,c),Te=new Pw,Se=Ai().version,ke=e_(),Ie=new Mb({source:"codex-extension",env:ke,codexAppSessionId:n,buildInfo:{version:Se,buildNumber:null},reportFailure:B=>{Il.captureException(new Error(\`[datadog] log sink failure (\${B.type}: \${B.reason})\`))}});NZ(Ie);let Ot=new Ja(t.extensionUri,d,te,u,m,g??void 0,l,Te,Ie,k,r,b,S,Se,n,ke);e.push(Ot);let st=new _x(Ot);if(e.push(it.window.registerUriHandler(st)),e.push(it.window.registerWebviewViewProvider(Ja.viewType,Ot,{webviewOptions:{retainContextWhenHidden:!0}})),Ww(it.version)&&e.push(it.window.registerWebviewViewProvider(Ja.secondaryViewType,Ot,{webviewOptions:{retainContextWhenHidden:!0}})),e.push(it.window.registerCustomEditorProvider(Ja.customEditorViewType,Ot,{webviewOptions:{retainContextWhenHidden:!0},supportsMultipleEditorsPerDocument:!1})),e.push(it.commands.registerCommand("chatgpt.openSidebar",Uo)),`,
+    after: `let C=new V_;e.push(C);let P=new Z_(b,C);e.push(P);let U=new W_(v,d,C,l,u,a,b,S,k),te=new Qw(v,U,c),Te=new Pw,Se=Ai().version,ke=e_(),Ie=new Mb({source:"codex-extension",env:ke,codexAppSessionId:n,buildInfo:{version:Se,buildNumber:null},reportFailure:B=>{Il.captureException(new Error(\`[datadog] log sink failure (\${B.type}: \${B.reason})\`))}});NZ(Ie);let Ot=new Ja(t.extensionUri,d,te,u,m,g??void 0,l,Te,Ie,k,r,b,S,Se,n,ke);e.push(Ot);let closeCodexEditors=async()=>{let B=[];for(let Le of it.window.tabGroups.all)for(let Ge of Le.tabs){let ze=Ge.input,je=ze&&typeof ze=="object"&&"viewType"in ze&&ze.viewType===Ja.customEditorViewType;je&&B.push(Ge)}B.length>0&&await it.window.tabGroups.close(B,!0)},reloadCodexSidebar=async()=>{let B=Ot.sidebarView?.webview;if(!B)return;Ot.clearPendingRequestsForWebview(B),Ot.disposeIpcClientForWebview(B),Ot.workerBusMessageHandler.unregisterWebview(B),Ot.sidebarWebviewReady=!1,B.html='<!DOCTYPE html><html><body style="font-family:sans-serif;padding:16px;color:#888;">Reloading Codex...</body></html>',await new Promise(Le=>setTimeout(Le,150)),await Ot.initializeWebview(B,"sidebar")};let st=new _x(Ot);if(e.push(it.window.registerUriHandler(st)),e.push(it.window.registerWebviewViewProvider(Ja.viewType,Ot,{webviewOptions:{retainContextWhenHidden:!0}})),Ww(it.version)&&e.push(it.window.registerWebviewViewProvider(Ja.secondaryViewType,Ot,{webviewOptions:{retainContextWhenHidden:!0}})),e.push(it.window.registerCustomEditorProvider(Ja.customEditorViewType,Ot,{webviewOptions:{retainContextWhenHidden:!0},supportsMultipleEditorsPerDocument:!1})),e.push(it.commands.registerCommand("chatgpt.openSidebar",Uo)),`
   },
   {
     label: "reload-command",
     before: `e.push(it.commands.registerCommand("chatgpt.openSidebar",Uo)),e.push(it.commands.registerCommand("chatgpt.openCommandMenu",async()=>{await it.commands.executeCommand("workbench.action.showCommands")})),e.push(it.commands.registerCommand(tFe,async B=>{`,
-    after: `e.push(it.commands.registerCommand("chatgpt.openSidebar",Uo)),e.push(it.commands.registerCommand("chatgpt.openCommandMenu",async()=>{await it.commands.executeCommand("workbench.action.showCommands")})),e.push(it.commands.registerCommand(aFe,async()=>{let B=await reloadCodexProcess();B.success?it.window.setStatusBarMessage("Codex process reloaded.",3e3):it.window.showErrorMessage(B.errorMessage??"Failed to reload Codex process.");})),e.push(it.commands.registerCommand(tFe,async B=>{`
+    after: `e.push(it.commands.registerCommand("chatgpt.openSidebar",Uo)),e.push(it.commands.registerCommand("chatgpt.openCommandMenu",async()=>{await it.commands.executeCommand("workbench.action.showCommands")})),e.push(it.commands.registerCommand(aFe,async()=>{try{await closeCodexEditors();let B=await reloadCodexProcess();if(!B.success){it.window.showErrorMessage(B.errorMessage??"Failed to restart Codex.");return}await reloadCodexSidebar(),await Uo(),it.window.setStatusBarMessage("Codex restarted.",3e3)}catch(B){it.window.showErrorMessage(B instanceof Error?B.message:String(B))}})),e.push(it.commands.registerCommand(tFe,async B=>{`
   }
 ];
 
