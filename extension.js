@@ -242,6 +242,10 @@ async function showAccountQuickPick(statusBarItem, currentAccount, initialDelete
     iconPath: new vscode.ThemeIcon("close"),
     tooltip: "退出删除模式"
   };
+  const restartExtensionHostButton = {
+    iconPath: new vscode.ThemeIcon("debug-restart"),
+    tooltip: "重启整个扩展宿主"
+  };
 
   return await new Promise((resolve) => {
     const quickPick = vscode.window.createQuickPick();
@@ -272,7 +276,7 @@ async function showAccountQuickPick(statusBarItem, currentAccount, initialDelete
       quickPick.placeholder = deleteMode
         ? "当前为删除模式。选择一个账号即可删除它的保存记录。"
         : "选择要写入当前 Codex 配置的账号";
-      quickPick.buttons = [deleteMode ? switchModeButton : deleteModeButton];
+      quickPick.buttons = [restartExtensionHostButton, deleteMode ? switchModeButton : deleteModeButton];
       quickPick.items = buildAccountPicks(accounts, currentAccount?.accountId);
     };
 
@@ -281,7 +285,14 @@ async function showAccountQuickPick(statusBarItem, currentAccount, initialDelete
     quickPick.matchOnDetail = true;
     syncMode();
 
-    quickPick.onDidTriggerButton(() => {
+    quickPick.onDidTriggerButton(async (button) => {
+      if (button === restartExtensionHostButton) {
+        quickPick.hide();
+        finish(null);
+        await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
+        return;
+      }
+
       deleteMode = !deleteMode;
       syncMode();
     });
