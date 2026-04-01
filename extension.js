@@ -778,7 +778,12 @@ function replaceAccount(accounts, nextAccount) {
 async function refreshMissingQuotasInBackground(accounts, currentAccount, onUpdate) {
   let nextAccounts = accounts;
   const currentAccountId = currentAccount?.accountId;
-  const targets = accounts.filter((account) => shouldFetchQuotaOnOpen(account));
+  const targets = accounts.filter((account) => {
+    if (currentAccountId && account.accountId === currentAccountId) {
+      return true;
+    }
+    return shouldFetchQuotaOnOpen(account);
+  });
 
   for (const account of targets) {
     const result = await refreshQuotaForAccount(account, currentAccountId);
