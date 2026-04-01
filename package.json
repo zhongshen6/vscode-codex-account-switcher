@@ -72,6 +72,26 @@
           "default": 1500,
           "minimum": 0,
           "description": "连续发起配额请求之间的最小间隔，单位为毫秒。"
+        },
+        "codexAccountSwitcher.sortBy": {
+          "type": "string",
+          "default": "quota",
+          "enum": [
+            "quota",
+            "displayName",
+            "email"
+          ],
+          "enumDescriptions": [
+            "按配额排序，先比较 5h，再比较周配额。",
+            "按显示名排序。",
+            "按邮箱排序。"
+          ],
+          "description": "账号选择框的排序方式。"
+        },
+        "codexAccountSwitcher.sortDescending": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否使用倒序排序。对配额排序来说，关闭时低额度在前，开启时高额度在前。"
         }
       }
     }

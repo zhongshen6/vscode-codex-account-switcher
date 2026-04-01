@@ -61,8 +61,18 @@
 - `codexAccountSwitcher.autoRefreshQuota`
 - `codexAccountSwitcher.quotaRefreshIntervalMinutes`
 - `codexAccountSwitcher.quotaRequestMinIntervalMs`
+- `codexAccountSwitcher.sortBy`
+- `codexAccountSwitcher.sortDescending`
 
 选择框右上角的设置按钮会直接打开本扩展的设置页。
+
+排序说明：
+
+- 当前账号固定置顶
+- `sortBy = quota` 时，先按 `5h` 配额排序，再按 `周` 配额排序
+- 配额排序里，没有 `5h` 的账号按 `0` 处理
+- 配额排序里，`查询失败` 的账号会排在最后
+- `sortDescending = false` 时低额度在前，`true` 时高额度在前
 
 ## Codex 补丁
 

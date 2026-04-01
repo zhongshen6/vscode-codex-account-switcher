@@ -59,6 +59,15 @@ function getQuotaRequestMinIntervalMs() {
   return getNumberConfig("quotaRequestMinIntervalMs", DEFAULT_QUOTA_MIN_INTERVAL_MS, 0);
 }
 
+function getSortBy() {
+  const value = getExtensionConfig().get("sortBy");
+  return value === "displayName" || value === "email" ? value : "quota";
+}
+
+function isSortDescending() {
+  return getBooleanConfig("sortDescending", false);
+}
+
 function getAccountsDir() {
   return path.join(path.dirname(getCodexDir()), ".codex-accounts");
 }
@@ -433,6 +442,66 @@ function formatLastQuotaRefresh(account) {
   return formatRelativeTime(entry.lastCheckedAt);
 }
 
+function compareText(left, right) {
+  return String(left || "").localeCompare(String(right || ""), "zh-CN");
+}
+
+function getQuotaSortValue(account) {
+  const entry = getQuotaCacheEntry(account);
+  if (entry?.failed) {
+    return {
+      failed: true,
+      hourly: 0,
+      weekly: 0
+    };
+  }
+
+  return {
+    failed: false,
+    hourly: typeof entry?.summary?.hourlyPercentage === "number" ? entry.summary.hourlyPercentage : 0,
+    weekly: typeof entry?.summary?.weeklyPercentage === "number" ? entry.summary.weeklyPercentage : 0
+  };
+}
+
+function compareAccounts(left, right, sortBy, descending) {
+  if (sortBy === "quota") {
+    const leftQuota = getQuotaSortValue(left);
+    const rightQuota = getQuotaSortValue(right);
+
+    if (leftQuota.failed !== rightQuota.failed) {
+      return leftQuota.failed ? 1 : -1;
+    }
+
+    if (leftQuota.hourly !== rightQuota.hourly) {
+      return descending ? rightQuota.hourly - leftQuota.hourly : leftQuota.hourly - rightQuota.hourly;
+    }
+
+    if (leftQuota.weekly !== rightQuota.weekly) {
+      return descending ? rightQuota.weekly - leftQuota.weekly : leftQuota.weekly - rightQuota.weekly;
+    }
+  }
+
+  if (sortBy === "displayName") {
+    const result = compareText(left.displayName, right.displayName);
+    if (result !== 0) {
+      return descending ? -result : result;
+    }
+  }
+
+  if (sortBy === "email") {
+    const result = compareText(left.email, right.email);
+    if (result !== 0) {
+      return descending ? -result : result;
+    }
+  }
+
+  const fallbackByName = compareText(left.displayName, right.displayName);
+  if (fallbackByName !== 0) {
+    return fallbackByName;
+  }
+  return compareText(left.email, right.email);
+}
+
 async function readAccountMetadata(authPath) {
   const authText = await fs.readFile(authPath, "utf8");
   const auth = JSON.parse(authText);
@@ -754,6 +823,8 @@ async function restoreCodexPatchCommand() {
 }
 
 function buildAccountPicks(accounts, currentAccountId) {
+  const sortBy = getSortBy();
+  const descending = isSortDescending();
   const picks = accounts.map((account) => ({
     label: account.email,
     description: account.userName,
@@ -765,7 +836,10 @@ function buildAccountPicks(accounts, currentAccountId) {
   picks.sort((left, right) => {
     const leftCurrent = left.account.accountId === currentAccountId ? 1 : 0;
     const rightCurrent = right.account.accountId === currentAccountId ? 1 : 0;
-    return rightCurrent - leftCurrent;
+    if (leftCurrent !== rightCurrent) {
+      return rightCurrent - leftCurrent;
+    }
+    return compareAccounts(left.account, right.account, sortBy, descending);
   });
 
   return picks;
