@@ -1,7 +1,7 @@
 {
   "name": "codex-account-switcher",
   "displayName": "Codex 账号切换器",
-  "description": "通过状态栏按钮和选择框切换 Codex 账号。",
+  "description": "切换 Codex 账号，查看配额，自动续期，并在切号后重载 Codex。",
   "version": "0.0.1",
   "publisher": "local",
   "engines": {
@@ -42,6 +42,38 @@
         "command": "codexAccountSwitcher.restoreCodexPatch",
         "title": "Codex 账号切换器：恢复 Codex 补丁"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Codex 账号切换器",
+      "properties": {
+        "codexAccountSwitcher.autoReloadCodexAfterSwitch": {
+          "type": "boolean",
+          "default": true,
+          "description": "切换账号后自动重载 Codex。"
+        },
+        "codexAccountSwitcher.autoRefreshTokensForInactiveAccounts": {
+          "type": "boolean",
+          "default": true,
+          "description": "允许对非当前账号自动续期 access token。"
+        },
+        "codexAccountSwitcher.autoRefreshQuota": {
+          "type": "boolean",
+          "default": true,
+          "description": "在后台定时刷新已保存账号的配额信息。"
+        },
+        "codexAccountSwitcher.quotaRefreshIntervalMinutes": {
+          "type": "number",
+          "default": 60,
+          "minimum": 1,
+          "description": "后台自动刷新配额的时间间隔，单位为分钟。"
+        },
+        "codexAccountSwitcher.quotaRequestMinIntervalMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 0,
+          "description": "连续发起配额请求之间的最小间隔，单位为毫秒。"
+        }
+      }
+    }
   }
 }
