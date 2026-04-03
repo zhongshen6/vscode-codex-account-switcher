@@ -804,22 +804,20 @@ async function warmAccountCache(statusBarItem) {
 }
 
 async function promptReloadWindow(message) {
-  const choice = await vscode.window.showInformationMessage(message, "立即重载", "稍后");
-  if (choice === "立即重载") {
-    await vscode.commands.executeCommand("workbench.action.reloadWindow");
-  }
+  vscode.window.setStatusBarMessage(message, 3000);
+  await vscode.commands.executeCommand("workbench.action.reloadWindow");
 }
 async function applyCodexPatchCommand() {
   const result = await codexPatch.applyPatch();
   const message = result.changed
     ? "Codex 补丁已应用。"
     : "Codex 补丁已存在于磁盘中。";
-  await promptReloadWindow(`${message} 请重载一次窗口使其生效。`);
+  await promptReloadWindow(`${message} 正在重载窗口使其生效。`);
 }
 
 async function restoreCodexPatchCommand() {
   await codexPatch.restorePatch();
-  await promptReloadWindow("Codex 补丁已恢复为原始文件。请重载一次窗口使其生效。");
+  await promptReloadWindow("Codex 补丁已恢复为原始文件。正在重载窗口使其生效。");
 }
 
 function buildAccountPicks(accounts, currentAccountId) {
@@ -1135,13 +1133,10 @@ async function switchAccount(statusBarItem) {
       const action = await vscode.window.showWarningMessage(
         `账号已经切换，但无法快速重载 Codex：${detail}`,
         "应用补丁",
-        "重载窗口",
         "确定"
       );
       if (action === "应用补丁") {
         await applyCodexPatchCommand();
-      } else if (action === "重载窗口") {
-        await vscode.commands.executeCommand("workbench.action.reloadWindow");
       }
     }
   } else {
