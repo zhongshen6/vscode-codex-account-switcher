@@ -1,8 +1,8 @@
 {
   "name": "codex-account-switcher",
   "displayName": "Codex 账号切换器",
-  "description": "切换 Codex 账号，查看配额，自动续期，并在切号后重载 Codex。",
-  "version": "0.0.1",
+  "description": "切换 Codex 账号，查看状态栏周额度，自动续期，并在切号后重载 Codex。",
+  "version": "0.0.2",
   "publisher": "local",
   "engines": {
     "vscode": "^1.96.0"
