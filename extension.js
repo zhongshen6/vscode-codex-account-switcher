@@ -11,7 +11,7 @@ const TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const TOKEN_REFRESH_SKEW_SECONDS = 60;
 const QUOTA_REQUEST_TIMEOUT_MS = 15000;
-const QUOTA_SCHEDULER_POLL_INTERVAL_MS = 60 * 1000;
+const QUOTA_SCHEDULER_POLL_INTERVAL_MS = 30 * 1000;
 const DEFAULT_QUOTA_REFRESH_INTERVAL_MINUTES = 60;
 const DEFAULT_QUOTA_MIN_INTERVAL_MS = 1500;
 const QUOTA_FAILURE_MARK_THRESHOLD = 3;
@@ -370,6 +370,10 @@ function formatPercent(value) {
   return typeof value === "number" ? `${Math.round(value)}%` : "--";
 }
 
+function isKnownAccountId(accountId) {
+  return typeof accountId === "string" && accountId.length > 0 && accountId !== "未知";
+}
+
 function formatRelativeTime(timestamp) {
   if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
     return null;
@@ -440,6 +444,143 @@ function formatLastQuotaRefresh(account) {
     return null;
   }
   return formatRelativeTime(entry.lastCheckedAt);
+}
+
+function formatQuotaResetTime(resetTimestampSeconds) {
+  if (typeof resetTimestampSeconds !== "number" || !Number.isFinite(resetTimestampSeconds)) {
+    return null;
+  }
+
+  const resetDate = new Date(resetTimestampSeconds * 1000);
+  if (Number.isNaN(resetDate.getTime())) {
+    return null;
+  }
+
+  const now = new Date();
+  const resetDayStart = new Date(resetDate.getFullYear(), resetDate.getMonth(), resetDate.getDate());
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayDiff = Math.round((resetDayStart.getTime() - todayStart.getTime()) / (24 * 60 * 60 * 1000));
+  const timeText = resetDate.toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  if (dayDiff === 0) {
+    return `今天 ${timeText}`;
+  }
+
+  if (dayDiff === 1) {
+    return `明天 ${timeText}`;
+  }
+
+  const dateText = resetDate.toLocaleDateString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit"
+  }).replace(/\//g, "-");
+
+  return `${dateText} ${timeText}`;
+}
+
+function formatQuickPickQuotaDetail(account) {
+  const entry = getQuotaCacheEntry(account);
+  if (!entry) {
+    return `${account.planType} | 配额待检查`;
+  }
+
+  if (entry.failed) {
+    return `${account.planType} | 查询失败`;
+  }
+
+  if (!entry.summary) {
+    return `${account.planType} | ${entry.refreshing ? "$(sync~spin) 配额检查中" : "配额检查失败"}`;
+  }
+
+  const parts = [account.planType];
+  if (typeof entry.summary.hourlyPercentage === "number") {
+    parts.push(`5h ${formatPercent(entry.summary.hourlyPercentage)}`);
+  }
+  parts.push(`周 ${formatPercent(entry.summary.weeklyPercentage)}`);
+
+  const weeklyResetText = formatQuotaResetTime(entry.summary.weeklyResetTime);
+  if (weeklyResetText) {
+    parts.push(weeklyResetText);
+  }
+
+  const lastRefreshText = formatLastQuotaRefresh(account);
+  if (lastRefreshText) {
+    parts.push(lastRefreshText);
+  }
+
+  return parts.join(" | ");
+}
+
+function isSameAccount(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (left.authPath && right.authPath && left.authPath === right.authPath) {
+    return true;
+  }
+
+  if (isKnownAccountId(left.accountId) && isKnownAccountId(right.accountId)) {
+    return left.accountId === right.accountId;
+  }
+
+  if (left.email && right.email && left.email !== "未知邮箱" && right.email !== "未知邮箱") {
+    return left.email === right.email;
+  }
+
+  return false;
+}
+
+function upsertAccount(accounts, nextAccount) {
+  const index = accounts.findIndex((account) => isSameAccount(account, nextAccount));
+  if (index === -1) {
+    return [...accounts, nextAccount];
+  }
+
+  const nextAccounts = [...accounts];
+  nextAccounts[index] = nextAccount;
+  return nextAccounts;
+}
+
+function getWeeklyQuotaDisplay(account) {
+  const entry = getQuotaCacheEntry(account);
+  if (!entry) {
+    return {
+      icon: "person",
+      text: "周 --"
+    };
+  }
+
+  if (entry.failed) {
+    return {
+      icon: "warning",
+      text: "周 ?"
+    };
+  }
+
+  const summaryText = `周 ${formatPercent(entry.summary?.weeklyPercentage)}`;
+  if (entry.refreshing) {
+    return {
+      icon: "sync~spin",
+      text: summaryText
+    };
+  }
+
+  if (entry.error && !entry.summary) {
+    return {
+      icon: "warning",
+      text: "周 ?"
+    };
+  }
+
+  return {
+    icon: "person",
+    text: summaryText
+  };
 }
 
 function compareText(left, right) {
@@ -826,7 +967,7 @@ function buildAccountPicks(accounts, currentAccountId) {
   const picks = accounts.map((account) => ({
     label: account.email,
     description: account.userName,
-    detail: `${account.planType} | ${formatQuotaStatus(account)}${formatLastQuotaRefresh(account) ? ` | ${formatLastQuotaRefresh(account)}` : ""}`,
+    detail: formatQuickPickQuotaDetail(account),
     account,
     picked: account.accountId === currentAccountId
   }));
@@ -847,15 +988,60 @@ function replaceAccount(accounts, nextAccount) {
   return accounts.map((account) => (account.authPath === nextAccount.authPath ? nextAccount : account));
 }
 
+async function resolveSavedCurrentAccount(currentAccount, accounts) {
+  let nextAccounts = accounts;
+  if (!currentAccount) {
+    return {
+      currentAccount: null,
+      accounts: nextAccounts
+    };
+  }
+
+  let savedCurrentAccount = nextAccounts.find((account) => isSameAccount(account, currentAccount)) || null;
+  if (!savedCurrentAccount) {
+    savedCurrentAccount = await ensureCurrentAccountSaved();
+    if (savedCurrentAccount) {
+      nextAccounts = upsertAccount(nextAccounts, savedCurrentAccount);
+    }
+  }
+
+  return {
+    currentAccount: savedCurrentAccount,
+    accounts: nextAccounts
+  };
+}
+
+async function refreshCurrentAccountQuotaInBackground(statusBarItem, preferredAccount) {
+  let currentAccount = preferredAccount || await readCurrentAccountMetadata();
+  if (!currentAccount) {
+    if (statusBarItem) {
+      await updateStatusBar(statusBarItem);
+    }
+    return null;
+  }
+
+  if (currentAccount.authPath === getCurrentAuthPath()) {
+    currentAccount = await ensureCurrentAccountSaved();
+  }
+
+  if (!currentAccount) {
+    if (statusBarItem) {
+      await updateStatusBar(statusBarItem);
+    }
+    return null;
+  }
+
+  const result = await refreshQuotaForAccount(currentAccount, currentAccount.accountId);
+  if (statusBarItem) {
+    await updateStatusBar(statusBarItem);
+  }
+  return result?.account || currentAccount;
+}
+
 async function refreshMissingQuotasInBackground(accounts, currentAccount, onUpdate) {
   let nextAccounts = accounts;
   const currentAccountId = currentAccount?.accountId;
-  const targets = accounts.filter((account) => {
-    if (currentAccountId && account.accountId === currentAccountId) {
-      return true;
-    }
-    return shouldFetchQuotaOnOpen(account);
-  });
+  const targets = accounts.filter((account) => !isSameAccount(account, currentAccount) && shouldFetchQuotaOnOpen(account));
 
   for (const account of targets) {
     const result = await refreshQuotaForAccount(account, currentAccountId);
@@ -894,12 +1080,24 @@ async function refreshDueQuotasInBackground(statusBarItem) {
   const maxAgeMs = getQuotaRefreshIntervalMs();
   const currentAccount = await readCurrentAccountMetadata();
   let accounts = await listAccounts();
-  const targets = accounts.filter((account) => shouldRefreshQuotaByAge(account, maxAgeMs));
+  const resolvedCurrent = await resolveSavedCurrentAccount(currentAccount, accounts);
+  let currentSavedAccount = resolvedCurrent.currentAccount;
+  accounts = resolvedCurrent.accounts;
+
+  if (currentSavedAccount) {
+    const result = await refreshQuotaForAccount(currentSavedAccount, currentSavedAccount.accountId);
+    if (result?.account) {
+      currentSavedAccount = result.account;
+      accounts = upsertAccount(accounts, result.account);
+    }
+  }
+
+  const targets = accounts.filter((account) => !isSameAccount(account, currentSavedAccount) && shouldRefreshQuotaByAge(account, maxAgeMs));
 
   for (const account of targets) {
-    const result = await refreshQuotaForAccount(account, currentAccount?.accountId);
+    const result = await refreshQuotaForAccount(account, currentSavedAccount?.accountId || currentAccount?.accountId);
     if (result?.account) {
-      accounts = replaceAccount(accounts, result.account);
+      accounts = upsertAccount(accounts, result.account);
     }
   }
 
@@ -981,7 +1179,9 @@ async function showAccountQuickPick(statusBarItem, currentAccount, initialDelete
     };
 
     const syncMode = () => {
-      quickPick.title = deleteMode ? "切换 Codex 账号 [删除模式]" : "切换 Codex 账号";
+      quickPick.title = deleteMode
+        ? `切换 Codex 账号 [删除模式]（共 ${accounts.length} 个）`
+        : `切换 Codex 账号（共 ${accounts.length} 个）`;
       quickPick.placeholder = deleteMode
         ? "当前为删除模式。选择一个账号即可删除它的保存记录。"
         : "选择要写入当前 Codex 配置的账号";
@@ -1087,8 +1287,15 @@ async function updateStatusBar(statusBarItem) {
     const current = await readCurrentAccountMetadata();
 
     if (current) {
-      statusBarItem.text = `$(person) Codex: ${current.displayName}`;
-      statusBarItem.tooltip = `${current.userName}\n${current.email}\n套餐：${current.planType}`;
+      const weeklyQuotaDisplay = getWeeklyQuotaDisplay(current);
+      statusBarItem.text = `$(${weeklyQuotaDisplay.icon}) Codex: ${current.displayName} | ${weeklyQuotaDisplay.text}`;
+      statusBarItem.tooltip = [
+        current.userName,
+        current.email,
+        `套餐：${current.planType}`,
+        `配额：${formatQuotaStatus(current)}`,
+        formatLastQuotaRefresh(current) ? `最近刷新：${formatLastQuotaRefresh(current)}` : null
+      ].filter(Boolean).join("\n");
     } else {
       statusBarItem.text = "$(person) Codex：未登录";
       statusBarItem.tooltip = "当前没有活动的 Codex 登录。请选择一个账号登录。";
@@ -1114,6 +1321,9 @@ async function switchAccount(statusBarItem) {
   await fs.mkdir(codexDir, { recursive: true });
   await writeAccountAuth(path.join(codexDir, "auth.json"), sanitizeAuthForActivation(selection.auth));
 
+  void refreshCurrentAccountQuotaInBackground(statusBarItem, selection).catch(() => {
+    // Ignore immediate quota refresh failures and let the scheduler retry.
+  });
   await updateStatusBar(statusBarItem);
 
   const message = `已切换到账号：${selection.displayName}`;
