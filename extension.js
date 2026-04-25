@@ -3,6 +3,7 @@
 const fsNative = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
+const crypto = require("crypto");
 const vscode = require("vscode");
 const codexPatch = require("./codexPatch");
 
@@ -15,7 +16,7 @@ const QUOTA_SCHEDULER_POLL_INTERVAL_MS = 30 * 1000;
 const DEFAULT_QUOTA_REFRESH_INTERVAL_MINUTES = 60;
 const DEFAULT_QUOTA_MIN_INTERVAL_MS = 1500;
 const QUOTA_FAILURE_MARK_THRESHOLD = 3;
-const EXTENSION_META_KEY = "codexAccountSwitcher";
+const ACCOUNTS_META_FILE_NAME = ".codex-account-switcher-meta.json";
 const CONFIG_SECTION = "codexAccountSwitcher";
 
 const quotaCache = new Map();
@@ -81,6 +82,10 @@ function getCurrentAuthPath() {
   return path.join(getCodexDir(), "auth.json");
 }
 
+function getAccountsMetaPath() {
+  return path.join(getAccountsDir(), ACCOUNTS_META_FILE_NAME);
+}
+
 function formatDate(isoString) {
   if (!isoString) {
     return "到期时间未知";
@@ -92,6 +97,36 @@ function formatDate(isoString) {
   }
 
   return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function getApiKeyPreview(apiKey) {
+  if (typeof apiKey !== "string") {
+    return null;
+  }
+  const trimmed = apiKey.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.slice(0, 10);
+}
+
+function buildApiKeyAccountId(apiKey) {
+  if (typeof apiKey !== "string" || !apiKey.trim()) {
+    return null;
+  }
+  return `apikey:${crypto.createHash("sha256").update(apiKey).digest("hex").slice(0, 24)}`;
+}
+
+function isApiKeyAccount(account) {
+  return account?.savedAccount?.type === "apikey";
+}
+
+function supportsQuota(account) {
+  return !isApiKeyAccount(account);
+}
+
+function getAccountType(account) {
+  return account?.savedAccount?.type === "apikey" ? "apikey" : "chatgpt";
 }
 
 function decodeJwtPayload(token) {
@@ -170,83 +205,275 @@ async function refreshTokens(refreshToken) {
   };
 }
 
-async function writeAccountAuth(authPath, auth) {
-  await fs.writeFile(authPath, `${JSON.stringify(auth, null, 2)}\n`, "utf8");
+async function writeJsonFile(filePath, value) {
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-async function readAuthFromDisk(authPath, fallbackAuth) {
+async function readJsonFromDisk(filePath, fallbackValue) {
   try {
-    const authText = await fs.readFile(authPath, "utf8");
-    return JSON.parse(authText);
+    const text = await fs.readFile(filePath, "utf8");
+    return JSON.parse(text);
   } catch {
-    return fallbackAuth;
+    return fallbackValue;
   }
 }
 
-function getExtensionMeta(auth) {
-  const meta = auth?.[EXTENSION_META_KEY];
-  return meta && typeof meta === "object" ? meta : {};
+function getStoredAccountsMeta(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const accounts = value.accounts;
+  return accounts && typeof accounts === "object" ? accounts : {};
 }
 
-function getPersistedQuotaSummary(auth) {
-  const meta = getExtensionMeta(auth);
-  return meta?.quotaSummary && typeof meta.quotaSummary === "object" ? meta.quotaSummary : null;
-}
-
-function getPersistedLastCheckedAt(auth) {
-  const meta = getExtensionMeta(auth);
-  return typeof meta?.lastQuotaCheckedAt === "number" ? meta.lastQuotaCheckedAt : undefined;
-}
-
-function getPersistedFailureCount(auth) {
-  const meta = getExtensionMeta(auth);
-  return typeof meta?.consecutiveQuotaFailures === "number" ? meta.consecutiveQuotaFailures : 0;
-}
-
-function getPersistedQuotaQueryFailed(auth) {
-  const meta = getExtensionMeta(auth);
-  return meta?.quotaQueryFailed === true;
-}
-
-function buildPersistedAuth(auth, patch) {
-  const meta = getExtensionMeta(auth);
+async function readAccountsMeta() {
+  const data = await readJsonFromDisk(getAccountsMetaPath(), null);
   return {
-    ...auth,
-    [EXTENSION_META_KEY]: {
-      ...meta,
-      ...patch
-    }
+    version: typeof data?.version === "number" ? data.version : 1,
+    accounts: getStoredAccountsMeta(data)
   };
 }
 
-function sanitizeAuthForActivation(auth) {
-  if (!auth || typeof auth !== "object") {
-    return auth;
+async function writeAccountsMeta(meta) {
+  await fs.mkdir(getAccountsDir(), { recursive: true });
+  await writeJsonFile(getAccountsMetaPath(), {
+    version: 1,
+    accounts: getStoredAccountsMeta(meta)
+  });
+}
+
+function buildSavedAccountMeta(metaPatch, currentMeta) {
+  return {
+    quotaSummary: metaPatch.quotaSummary ?? currentMeta?.quotaSummary,
+    lastQuotaCheckedAt: typeof metaPatch.lastQuotaCheckedAt === "number"
+      ? metaPatch.lastQuotaCheckedAt
+      : currentMeta?.lastQuotaCheckedAt,
+    consecutiveQuotaFailures: typeof metaPatch.consecutiveQuotaFailures === "number"
+      ? metaPatch.consecutiveQuotaFailures
+      : currentMeta?.consecutiveQuotaFailures ?? 0,
+    quotaQueryFailed: metaPatch.quotaQueryFailed === true
+      ? true
+      : metaPatch.quotaQueryFailed === false
+        ? false
+        : currentMeta?.quotaQueryFailed === true
+  };
+}
+
+async function updateAccountMeta(accountId, metaPatch) {
+  if (!isKnownAccountId(accountId)) {
+    return;
   }
-  const nextAuth = { ...auth };
-  delete nextAuth[EXTENSION_META_KEY];
-  return nextAuth;
+  const allMeta = await readAccountsMeta();
+  const currentMeta = allMeta.accounts[accountId];
+  allMeta.accounts[accountId] = buildSavedAccountMeta(metaPatch, currentMeta);
+  await writeAccountsMeta(allMeta);
+}
+
+async function removeAccountMeta(accountId) {
+  if (!isKnownAccountId(accountId)) {
+    return;
+  }
+  const allMeta = await readAccountsMeta();
+  if (!Object.prototype.hasOwnProperty.call(allMeta.accounts, accountId)) {
+    return;
+  }
+  delete allMeta.accounts[accountId];
+  await writeAccountsMeta(allMeta);
+}
+
+function buildAccountMetadata(params) {
+  return {
+    auth: params.auth,
+    savedAccount: params.savedAccount,
+    authPath: params.authPath,
+    accountDir: path.dirname(params.authPath),
+    storageName: path.basename(params.authPath),
+    userName: params.userName,
+    email: params.email,
+    displayName: params.displayName,
+    planType: params.planType,
+    expiresAt: params.expiresAt,
+    accountId: params.accountId,
+    disabled: params.savedAccount?.disabled === true
+  };
+}
+
+function buildActivationAuth(savedAccount) {
+  if (!savedAccount || typeof savedAccount !== "object") {
+    return null;
+  }
+
+  if (savedAccount.type === "apikey") {
+    return {
+      auth_mode: "apikey",
+      OPENAI_API_KEY: savedAccount.api_key || null
+    };
+  }
+
+  return {
+    auth_mode: "chatgpt",
+    OPENAI_API_KEY: null,
+    tokens: {
+      id_token: savedAccount.id_token || null,
+      access_token: savedAccount.access_token || null,
+      refresh_token: savedAccount.refresh_token || null,
+      account_id: savedAccount.account_id || null
+    },
+    last_refresh: savedAccount.last_refresh || new Date().toISOString()
+  };
+}
+
+function parseAuthIdentity(auth) {
+  if (!auth || typeof auth !== "object") {
+    return null;
+  }
+
+  const idPayload = decodeJwtPayload(auth?.tokens?.id_token) || {};
+  const accessPayload = decodeJwtPayload(auth?.tokens?.access_token) || {};
+  const authPayload = idPayload["https://api.openai.com/auth"] || accessPayload["https://api.openai.com/auth"] || {};
+  const profilePayload = accessPayload["https://api.openai.com/profile"] || {};
+  const accountId = auth?.tokens?.account_id || authPayload.chatgpt_account_id || null;
+
+  return {
+    idPayload,
+    accessPayload,
+    authPayload,
+    profilePayload,
+    accountId: isKnownAccountId(accountId) ? accountId : null,
+    email: idPayload.email || profilePayload.email || null,
+    userName: idPayload.name || null,
+    planType: authPayload.chatgpt_plan_type || "未知",
+    expiresAt: accessPayload.exp
+      ? new Date(accessPayload.exp * 1000).toISOString()
+      : idPayload.exp
+        ? new Date(idPayload.exp * 1000).toISOString()
+        : null
+  };
+}
+
+function buildSavedAccountFromAuth(auth, disabled = false) {
+  if (auth?.auth_mode === "apikey") {
+    const apiKey = typeof auth.OPENAI_API_KEY === "string" ? auth.OPENAI_API_KEY.trim() : "";
+    const accountId = buildApiKeyAccountId(apiKey);
+    if (!accountId) {
+      return null;
+    }
+
+    return {
+      type: "apikey",
+      email: "API 登录",
+      account_id: accountId,
+      api_key: apiKey,
+      access_token: null,
+      refresh_token: null,
+      id_token: null,
+      expired: null,
+      last_refresh: new Date().toISOString(),
+      disabled: disabled === true
+    };
+  }
+
+  const identity = parseAuthIdentity(auth);
+  if (!identity?.accountId) {
+    return null;
+  }
+
+  return {
+    type: "codex",
+    email: identity.email || "未知邮箱",
+    account_id: identity.accountId,
+    access_token: auth?.tokens?.access_token || null,
+    refresh_token: auth?.tokens?.refresh_token || null,
+    id_token: auth?.tokens?.id_token || null,
+    expired: identity.expiresAt,
+    last_refresh: auth?.last_refresh || new Date().toISOString(),
+    disabled: disabled === true
+  };
+}
+
+function buildApiKeyAccountMetadata(savedAccount, auth, authPath) {
+  const apiKeyPreview = getApiKeyPreview(savedAccount.api_key) || "未知";
+  return buildAccountMetadata({
+    auth,
+    savedAccount,
+    authPath,
+    userName: apiKeyPreview,
+    email: "API 登录",
+    displayName: "API 登录",
+    planType: "未知",
+    expiresAt: null,
+    accountId: savedAccount.account_id
+  });
+}
+
+function buildCodexAccountMetadata(savedAccount, auth, authPath) {
+  const identity = parseAuthIdentity(auth);
+  if (!identity?.accountId) {
+    return null;
+  }
+
+  const email = savedAccount.email || identity.email || "未知邮箱";
+  const userName = identity.userName || "未知用户";
+  const displayName = userName !== "未知用户"
+    ? userName
+    : email !== "未知邮箱"
+      ? email
+      : savedAccount.account_id;
+
+  return buildAccountMetadata({
+    auth,
+    savedAccount,
+    authPath,
+    userName,
+    email,
+    displayName,
+    planType: identity.planType || "未知",
+    expiresAt: savedAccount.expired || identity.expiresAt || null,
+    accountId: savedAccount.account_id
+  });
+}
+
+function readSavedAccountIdentity(savedAccount, authPath) {
+  if (!savedAccount || typeof savedAccount !== "object") {
+    throw new Error("账号文件格式无效");
+  }
+
+  if (savedAccount.type === "apikey") {
+    const accountId = buildApiKeyAccountId(savedAccount.api_key);
+    if (!accountId || savedAccount.account_id !== accountId) {
+      throw new Error(`API 账号文件缺少有效凭据：${path.basename(authPath)}`);
+    }
+    const auth = buildActivationAuth(savedAccount);
+    return buildApiKeyAccountMetadata(savedAccount, auth, authPath);
+  }
+
+  if (!isKnownAccountId(savedAccount.account_id)) {
+    throw new Error(`账号文件缺少有效 account_id：${path.basename(authPath)}`);
+  }
+
+  const auth = buildActivationAuth(savedAccount);
+  const metadata = buildCodexAccountMetadata(savedAccount, auth, authPath);
+  if (!metadata) {
+    throw new Error(`账号文件缺少有效凭据：${path.basename(authPath)}`);
+  }
+  return metadata;
 }
 
 async function persistQuotaSummary(account, summary, lastCheckedAt) {
-  const latestAuth = await readAuthFromDisk(account.authPath, account.auth);
-  const nextAuth = buildPersistedAuth(latestAuth, {
+  await updateAccountMeta(account.accountId, {
     quotaSummary: summary,
     lastQuotaCheckedAt: lastCheckedAt,
     consecutiveQuotaFailures: 0,
     quotaQueryFailed: false
   });
-  await writeAccountAuth(account.authPath, nextAuth);
 }
 
 async function persistQuotaFailureState(account, patch) {
-  const latestAuth = await readAuthFromDisk(account.authPath, account.auth);
-  const nextAuth = buildPersistedAuth(latestAuth, {
+  await updateAccountMeta(account.accountId, {
     consecutiveQuotaFailures: patch.consecutiveFailures,
     quotaQueryFailed: patch.failed,
     ...(typeof patch.lastCheckedAt === "number" ? { lastQuotaCheckedAt: patch.lastCheckedAt } : {})
   });
-  await writeAccountAuth(account.authPath, nextAuth);
 }
 
 async function waitForQuotaRateLimit() {
@@ -644,52 +871,24 @@ function compareAccounts(left, right, sortBy, descending) {
 }
 
 async function readAccountMetadata(authPath) {
-  const authText = await fs.readFile(authPath, "utf8");
-  const auth = JSON.parse(authText);
-  const idPayload = decodeJwtPayload(auth?.tokens?.id_token) || {};
-  const accessPayload = decodeJwtPayload(auth?.tokens?.access_token) || {};
-  const authPayload = idPayload["https://api.openai.com/auth"] || accessPayload["https://api.openai.com/auth"] || {};
-  const profilePayload = accessPayload["https://api.openai.com/profile"] || {};
-  const planType = authPayload.chatgpt_plan_type || "未知";
-  const email = idPayload.email || profilePayload.email || "未知邮箱";
-  const userName = idPayload.name || "未知用户";
-  const expiresAt = idPayload.exp ? new Date(idPayload.exp * 1000).toISOString() : null;
-  const persistedQuotaSummary = getPersistedQuotaSummary(auth);
-  const persistedLastCheckedAt = getPersistedLastCheckedAt(auth);
-  const persistedFailureCount = getPersistedFailureCount(auth);
-  const persistedQuotaQueryFailed = getPersistedQuotaQueryFailed(auth);
-  const displayName = userName !== "未知用户"
-    ? userName
-    : email !== "未知邮箱"
-      ? email
-      : auth?.tokens?.account_id || authPayload.chatgpt_account_id || path.basename(authPath, ".json");
-
-  const metadata = {
-    auth,
-    authPath,
-    accountDir: path.dirname(authPath),
-    storageName: path.basename(authPath),
-    userName,
-    email,
-    displayName,
-    planType,
-    expiresAt,
-    accountId: auth?.tokens?.account_id || authPayload.chatgpt_account_id || "未知"
-  };
+  const savedAccount = await readJsonFromDisk(authPath, null);
+  const metadata = readSavedAccountIdentity(savedAccount, authPath);
+  const allMeta = await readAccountsMeta();
+  const persistedMeta = allMeta.accounts[metadata.accountId];
 
   if (
-    persistedQuotaSummary ||
-    typeof persistedLastCheckedAt === "number" ||
-    persistedFailureCount > 0 ||
-    persistedQuotaQueryFailed
+    persistedMeta?.quotaSummary ||
+    typeof persistedMeta?.lastQuotaCheckedAt === "number" ||
+    (persistedMeta?.consecutiveQuotaFailures || 0) > 0 ||
+    persistedMeta?.quotaQueryFailed === true
   ) {
     setQuotaCacheEntry(metadata, {
       refreshing: false,
       error: null,
-      summary: persistedQuotaSummary || undefined,
-      lastCheckedAt: persistedLastCheckedAt,
-      consecutiveFailures: persistedFailureCount,
-      failed: persistedQuotaQueryFailed
+      summary: persistedMeta?.quotaSummary || undefined,
+      lastCheckedAt: persistedMeta?.lastQuotaCheckedAt,
+      consecutiveFailures: persistedMeta?.consecutiveQuotaFailures || 0,
+      failed: persistedMeta?.quotaQueryFailed === true
     });
   }
 
@@ -697,8 +896,12 @@ async function readAccountMetadata(authPath) {
 }
 
 async function refreshAccountTokensIfNeeded(account, currentAccountId) {
-  const accessToken = account?.auth?.tokens?.access_token;
-  const refreshToken = account?.auth?.tokens?.refresh_token;
+  if (isApiKeyAccount(account)) {
+    return account;
+  }
+
+  const accessToken = account?.savedAccount?.access_token;
+  const refreshToken = account?.savedAccount?.refresh_token;
   const isCurrentAccount = Boolean(
     currentAccountId &&
     account?.accountId &&
@@ -719,23 +922,34 @@ async function refreshAccountTokensIfNeeded(account, currentAccountId) {
   }
 
   const refreshed = await refreshTokens(refreshToken);
-  const nextAuth = {
-    ...account.auth,
+  const refreshedAt = new Date().toISOString();
+  const refreshedSavedAccount = buildSavedAccountFromAuth({
+    auth_mode: "chatgpt",
+    OPENAI_API_KEY: null,
     tokens: {
-      ...account.auth.tokens,
       id_token: refreshed.idToken,
       access_token: refreshed.accessToken,
       refresh_token: refreshed.refreshToken || refreshToken,
-      account_id: account.auth.tokens.account_id || account.accountId
-    }
+      account_id: account.accountId
+    },
+    last_refresh: refreshedAt
+  });
+  const nextSavedAccount = {
+    ...account.savedAccount,
+    ...refreshedSavedAccount,
+    disabled: account.savedAccount?.disabled === true
   };
 
-  await writeAccountAuth(account.authPath, nextAuth);
+  await writeJsonFile(account.authPath, nextSavedAccount);
   return await readAccountMetadata(account.authPath);
 }
 
 async function requestQuotaUsage(account) {
-  const accessToken = account?.auth?.tokens?.access_token;
+  if (!supportsQuota(account)) {
+    throw new Error("当前账号类型不支持配额查询");
+  }
+
+  const accessToken = account?.savedAccount?.access_token;
   if (!accessToken) {
     throw new Error("账号缺少 access_token");
   }
@@ -773,6 +987,12 @@ async function requestQuotaUsage(account) {
 }
 
 async function refreshQuotaForAccount(account, currentAccountId) {
+  if (!supportsQuota(account)) {
+    return {
+      account
+    };
+  }
+
   const key = getAccountCacheKey(account);
   const inflight = quotaInflightRequests.get(key);
   if (inflight) {
@@ -849,39 +1069,74 @@ async function refreshQuotaForAccount(account, currentAccountId) {
   }
 }
 
-async function listAccounts() {
-  const accountsDir = getAccountsDir();
+async function listSavedAccountJsonPaths() {
   let entries = [];
   try {
-    entries = await fs.readdir(accountsDir, { withFileTypes: true });
+    entries = await fs.readdir(getAccountsDir(), { withFileTypes: true });
   } catch {
     return [];
   }
 
-  const accounts = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".json")) {
-      continue;
-    }
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json") && entry.name !== ACCOUNTS_META_FILE_NAME)
+    .map((entry) => path.join(getAccountsDir(), entry.name));
+}
 
-    const authPath = path.join(accountsDir, entry.name);
+async function listAccounts() {
+  const authPaths = await listSavedAccountJsonPaths();
+
+  const accountsById = new Map();
+  for (const authPath of authPaths) {
     try {
-      accounts.push(await readAccountMetadata(authPath));
+      const account = await readAccountMetadata(authPath);
+      const existingAccount = accountsById.get(account.accountId);
+      accountsById.set(
+        account.accountId,
+        existingAccount ? pickPreferredAccountRecord(existingAccount, account) : account
+      );
     } catch {
       continue;
     }
   }
 
+  const accounts = Array.from(accountsById.values());
   accounts.sort((left, right) => left.displayName.localeCompare(right.displayName, "zh-CN"));
   return accounts;
 }
 
 async function readCurrentAccountMetadata() {
   try {
-    return await readAccountMetadata(getCurrentAuthPath());
+    const auth = await readJsonFromDisk(getCurrentAuthPath(), null);
+    const savedAccount = buildSavedAccountFromAuth(auth);
+    if (!savedAccount) {
+      return null;
+    }
+
+    if (auth?.auth_mode === "apikey") {
+      return buildApiKeyAccountMetadata(savedAccount, auth, getCurrentAuthPath());
+    }
+
+    if (auth?.auth_mode !== "chatgpt") {
+      return null;
+    }
+
+    return buildCodexAccountMetadata(savedAccount, auth, getCurrentAuthPath());
   } catch {
     return null;
   }
+}
+
+async function readCurrentAuthState() {
+  const account = await readCurrentAccountMetadata();
+  if (!account) {
+    return null;
+  }
+
+  return {
+    authMode: getAccountType(account),
+    account,
+    apiKeyPreview: isApiKeyAccount(account) ? account.userName : null
+  };
 }
 
 async function hasCurrentAuthFile() {
@@ -908,6 +1163,52 @@ function buildAccountFileName(account) {
   return `${displayPart}__${idPart}.json`;
 }
 
+function isNumericAccountFileName(fileName) {
+  return /^\d+\.json$/i.test(fileName || "");
+}
+
+function isCanonicalAccountFileName(account, fileName) {
+  return fileName === buildAccountFileName(account);
+}
+
+function pickPreferredAccountRecord(existingAccount, nextAccount) {
+  const existingCanonical = isCanonicalAccountFileName(existingAccount, existingAccount.storageName);
+  const nextCanonical = isCanonicalAccountFileName(nextAccount, nextAccount.storageName);
+  if (existingCanonical !== nextCanonical) {
+    return nextCanonical ? nextAccount : existingAccount;
+  }
+
+  const existingNumeric = isNumericAccountFileName(existingAccount.storageName);
+  const nextNumeric = isNumericAccountFileName(nextAccount.storageName);
+  if (existingNumeric !== nextNumeric) {
+    return nextNumeric ? existingAccount : nextAccount;
+  }
+
+  return compareText(existingAccount.storageName, nextAccount.storageName) <= 0
+    ? existingAccount
+    : nextAccount;
+}
+
+async function findSavedAccountPathByAccountId(accountId) {
+  if (!isKnownAccountId(accountId)) {
+    return null;
+  }
+
+  const authPaths = await listSavedAccountJsonPaths();
+  for (const authPath of authPaths) {
+    try {
+      const savedAccount = await readJsonFromDisk(authPath, null);
+      if (savedAccount?.account_id === accountId) {
+        return authPath;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 async function ensureCurrentAccountSaved() {
   const currentAccount = await readCurrentAccountMetadata();
   if (!currentAccount) {
@@ -915,20 +1216,10 @@ async function ensureCurrentAccountSaved() {
   }
 
   await fs.mkdir(getAccountsDir(), { recursive: true });
-  const targetPath = path.join(getAccountsDir(), buildAccountFileName(currentAccount));
-  let targetAuth = currentAccount.auth;
-  try {
-    const existingText = await fs.readFile(targetPath, "utf8");
-    const existingAuth = JSON.parse(existingText);
-    const existingMeta = getExtensionMeta(existingAuth);
-    if (Object.keys(existingMeta).length > 0) {
-      targetAuth = buildPersistedAuth(currentAccount.auth, existingMeta);
-    }
-  } catch {
-    // Ignore missing or invalid saved account files.
-  }
+  const existingPath = await findSavedAccountPathByAccountId(currentAccount.accountId);
+  const targetPath = existingPath || path.join(getAccountsDir(), buildAccountFileName(currentAccount));
 
-  await writeAccountAuth(targetPath, targetAuth);
+  await writeJsonFile(targetPath, currentAccount.savedAccount);
   return await readAccountMetadata(targetPath);
 }
 
@@ -965,8 +1256,8 @@ function buildAccountPicks(accounts, currentAccountId) {
   const sortBy = getSortBy();
   const descending = isSortDescending();
   const picks = accounts.map((account) => ({
-    label: account.email,
-    description: account.userName,
+    label: isApiKeyAccount(account) ? "API 登录" : account.email,
+    description: isApiKeyAccount(account) ? (account.userName || "未知") : account.userName,
     detail: formatQuickPickQuotaDetail(account),
     account,
     picked: account.accountId === currentAccountId
@@ -1117,6 +1408,7 @@ async function deleteSavedAccountFile(account, statusBarItem) {
   }
 
   await fs.unlink(account.authPath);
+  await removeAccountMeta(account.accountId);
 
   const sidecarTomlPath = account.authPath.replace(/\.json$/i, ".toml");
   try {
@@ -1284,9 +1576,10 @@ async function deleteSavedAccount(statusBarItem) {
 
 async function updateStatusBar(statusBarItem) {
   try {
-    const current = await readCurrentAccountMetadata();
+    const currentState = await readCurrentAuthState();
 
-    if (current) {
+    if (currentState?.authMode === "chatgpt" && currentState.account) {
+      const current = currentState.account;
       const weeklyQuotaDisplay = getWeeklyQuotaDisplay(current);
       statusBarItem.text = `$(${weeklyQuotaDisplay.icon}) Codex: ${current.displayName} | ${weeklyQuotaDisplay.text}`;
       statusBarItem.tooltip = [
@@ -1296,6 +1589,9 @@ async function updateStatusBar(statusBarItem) {
         `配额：${formatQuotaStatus(current)}`,
         formatLastQuotaRefresh(current) ? `最近刷新：${formatLastQuotaRefresh(current)}` : null
       ].filter(Boolean).join("\n");
+    } else if (currentState?.authMode === "apikey") {
+      statusBarItem.text = "$(key) Codex: API 登录";
+      statusBarItem.tooltip = `当前为 API Key 登录\nKey 前缀：${currentState.apiKeyPreview || "未知"}`;
     } else {
       statusBarItem.text = "$(person) Codex：未登录";
       statusBarItem.tooltip = "当前没有活动的 Codex 登录。请选择一个账号登录。";
@@ -1319,7 +1615,11 @@ async function switchAccount(statusBarItem) {
 
   const codexDir = getCodexDir();
   await fs.mkdir(codexDir, { recursive: true });
-  await writeAccountAuth(path.join(codexDir, "auth.json"), sanitizeAuthForActivation(selection.auth));
+  const activationAuth = buildActivationAuth(selection.savedAccount);
+  if (!activationAuth) {
+    throw new Error("账号数据无效，无法写入当前 Codex 配置");
+  }
+  await writeJsonFile(path.join(codexDir, "auth.json"), activationAuth);
 
   void refreshCurrentAccountQuotaInBackground(statusBarItem, selection).catch(() => {
     // Ignore immediate quota refresh failures and let the scheduler retry.
